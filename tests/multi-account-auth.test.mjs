@@ -63,12 +63,53 @@ test("dashboard date formatting is compatible with the Cloudflare runtime", asyn
 });
 
 test("photo uploads show server-confirmed status instead of silent local previews", async () => {
-  const dashboard = await read("app/dashboard.tsx");
+  const [dashboard, route] = await Promise.all([
+    read("app/dashboard.tsx"),
+    read("app/api/photos/route.ts"),
+  ]);
   assert.match(dashboard, /await fetch\("\/api\/photos"/);
   assert.match(dashboard, /response\.ok/);
+  assert.match(dashboard, /PHOTO_TARGET_BYTES = 1\.8 \* 1024 \* 1024/);
+  assert.match(dashboard, /PHOTO_MAX_COMPRESSION_ATTEMPTS = 4/);
+  assert.match(dashboard, /PHOTO_UPLOAD_ATTEMPTS = 3/);
+  assert.match(dashboard, /await compressPhoto\(file\)/);
+  assert.match(dashboard, /canvas\.toBlob/);
+  assert.match(dashboard, /await loadPhotoImage\(file\)/);
+  assert.match(dashboard, /手機無法讀取這種照片格式/);
+  assert.match(dashboard, /await uploadPhotoWithRetry/);
+  assert.match(dashboard, /上傳失敗：\{status\.message/);
+  assert.match(route, /photo\.size > 4 \* 1024 \* 1024/);
+  assert.match(dashboard, /正在縮小照片…/);
   assert.match(dashboard, /上傳中…/);
   assert.match(dashboard, /已安全保存/);
   assert.match(dashboard, /上傳失敗/);
+});
+
+test("guided camera reports 3D face pose and contour fit", async () => {
+  const [dashboard, camera] = await Promise.all([
+    read("app/dashboard.tsx"),
+    read("app/face-angle-camera.tsx"),
+  ]);
+  assert.match(dashboard, /<FaceAngleCamera/);
+  assert.match(camera, /navigator\.mediaDevices\.getUserMedia/);
+  assert.match(camera, /outputFacialTransformationMatrixes: true/);
+  assert.match(camera, /facialTransformationMatrixes\[0\]/);
+  assert.match(camera, /rotationMatrixToEuler/);
+  assert.match(camera, /yaw: clamp\(-toDegrees\(yawRadians\)/);
+  assert.match(camera, /pitch: clamp\(-toDegrees\(pitchRadians\)/);
+  assert.match(camera, /MIN_FACE_FIT = 0\.8/);
+  assert.match(camera, /calculateFaceFit/);
+  assert.match(camera, /correctedWidthScale = widthScale \/ projectedWidth/);
+  assert.match(camera, /angle === "front" \? 6 : 10/);
+  assert.match(camera, /輪廓吻合度/);
+  assert.doesNotMatch(camera, /眼睛高度/);
+  assert.doesNotMatch(camera, /臉部中心/);
+  assert.doesNotMatch(camera, /0\.42 - noseRatio/);
+  assert.match(camera, /目標角度/);
+  assert.match(camera, /角度與臉部大小都已對齊/);
+  assert.match(camera, /left:\s*-35,\s*right:\s*35/);
+  assert.match(camera, /difference > 0 \? "再向右轉一點" : "再向左轉一點"/);
+  assert.match(camera, /改用系統相機/);
 });
 
 test("calendar review and arbitrary two-date comparison use stored records and photos", async () => {
@@ -78,4 +119,8 @@ test("calendar review and arbitrary two-date comparison use stored records and p
   assert.match(dashboard, /aria-label="基準日期"/);
   assert.match(dashboard, /aria-label="對照日期"/);
   assert.match(dashboard, /`\/api\/photos\/\$\{photo\.id\}`/);
+  assert.match(dashboard, /className="photo-compare-board"/);
+  assert.match(dashboard, /aria-label="選擇比較角度"/);
+  assert.match(dashboard, /<details className="compare-details">/);
+  assert.match(dashboard, /查看分數與生活保養細節/);
 });
