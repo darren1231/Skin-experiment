@@ -21,6 +21,9 @@ type RecordRow = {
 type PhotoRow = { id: number; entryDate: string; angle: "front" | "left" | "right"; createdAt?: string };
 type UploadStatus = { state: "idle" | "uploading" | "saved" | "error"; message?: string };
 
+const PHOTO_TARGET_BYTES = 1.8 * 1024 * 1024;
+const PHOTO_MAX_COMPRESSION_ATTEMPTS = 4;
+const PHOTO_MAX_DIMENSION = 2048;
 const angles = [["front", "正面"], ["left", "左側 45°"], ["right", "右側 45°"]] as const;
 const metricNames: Record<string, string> = { acne: "痘痘", redness: "泛紅", dryness: "乾燥", oil: "出油", sensitivity: "敏感" };
 const initialMetrics: Metric[] = [
@@ -68,18 +71,20 @@ export default function Dashboard({ userName, userEmail }: { userName: string; u
   async function onPhoto(file?: File) {
     if (!file) return;
     const angle = photoAngle;
-    const previewUrl = URL.createObjectURL(file);
-    setPreviews((current) => {
-      if (current[angle]) URL.revokeObjectURL(current[angle]);
-      return { ...current, [angle]: previewUrl };
-    });
-    setUploadStatus((current) => ({ ...current, [angle]: { state: "uploading" } }));
-
-    const body = new FormData();
-    body.append("photo", file);
-    body.append("angle", angle);
-    body.append("entryDate", todayKey);
+    setUploadStatus((current) => ({ ...current, [angle]: { state: "uploading", message: file.size > PHOTO_TARGET_BYTES ? "正在縮小照片…" : "上傳中…" } }));
     try {
+      const uploadFile = await compressPhoto(file);
+      const previewUrl = URL.createObjectURL(uploadFile);
+      setPreviews((current) => {
+        if (current[angle]) URL.revokeObjectURL(current[angle]);
+        return { ...current, [angle]: previewUrl };
+      });
+      setUploadStatus((current) => ({ ...current, [angle]: { state: "uploading", message: "上傳中…" } }));
+
+      const body = new FormData();
+      body.append("photo", uploadFile);
+      body.append("angle", angle);
+      body.append("entryDate", todayKey);
       const response = await fetch("/api/photos", { method: "POST", body });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.photo) throw new Error(data.error || "上傳失敗");
@@ -141,7 +146,7 @@ export default function Dashboard({ userName, userEmail }: { userName: string; u
             const status = uploadStatus[id];
             return <button key={id} onClick={() => choosePhoto(id)} className={previews[id] ? "has-photo" : ""}>
               {previews[id] ? <img src={previews[id]} alt={`${label}拍攝預覽`} /> : <><span className="camera">◎</span><b>{label}</b><small>對齊輪廓拍攝</small></>}
-              {status?.state === "uploading" && <span className="upload-status uploading">上傳中…</span>}
+              {status?.state === "uploading" && <span className="upload-status uploading">{status.message ?? "上傳中…"}</span>}
               {status?.state === "saved" && <span className="upload-status saved">✓ 已安全保存</span>}
               {status?.state === "error" && <span className="upload-status error" title={status.message}>上傳失敗・請重拍</span>}
             </button>;
@@ -233,6 +238,54 @@ function parseMetrics(raw: string): MetricValues {
 
 function latestPhoto(photos: PhotoRow[], date: string, angle: PhotoRow["angle"]) {
   return photos.find((photo) => photo.entryDate === date && photo.angle === angle);
+}
+
+async function compressPhoto(file: File) {
+  if (!file.type.startsWith("image/")) throw new Error("請選擇照片檔案");
+  if (file.size <= PHOTO_TARGET_BYTES) return file;
+
+  const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  try {
+    let width = bitmap.width;
+    let height = bitmap.height;
+    const longestSide = Math.max(width, height);
+    if (longestSide > PHOTO_MAX_DIMENSION) {
+      const ratio = PHOTO_MAX_DIMENSION / longestSide;
+      width = Math.round(width * ratio);
+      height = Math.round(height * ratio);
+    }
+
+    let compressed: Blob | null = null;
+    for (let attempt = 0; attempt < PHOTO_MAX_COMPRESSION_ATTEMPTS; attempt += 1) {
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, width);
+      canvas.height = Math.max(1, height);
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("瀏覽器無法處理這張照片");
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const quality = Math.max(0.58, 0.86 - attempt * 0.09);
+      compressed = await canvasToBlob(canvas, quality);
+      if (compressed.size <= PHOTO_TARGET_BYTES) break;
+      width = Math.round(width * 0.82);
+      height = Math.round(height * 0.82);
+    }
+
+    if (!compressed || compressed.size > PHOTO_TARGET_BYTES) {
+      throw new Error("照片縮小後仍然太大，請改用較低解析度重新拍攝");
+    }
+    return new File([compressed], `${file.name.replace(/\.[^.]+$/, "") || "skin-photo"}.jpg`, {
+      type: "image/jpeg",
+      lastModified: Date.now(),
+    });
+  } finally {
+    bitmap.close();
+  }
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, quality: number) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("照片壓縮失敗，請重新拍攝")), "image/jpeg", quality);
+  });
 }
 
 function formatDate(date: string) {

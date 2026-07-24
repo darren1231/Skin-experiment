@@ -63,9 +63,19 @@ test("dashboard date formatting is compatible with the Cloudflare runtime", asyn
 });
 
 test("photo uploads show server-confirmed status instead of silent local previews", async () => {
-  const dashboard = await read("app/dashboard.tsx");
+  const [dashboard, route] = await Promise.all([
+    read("app/dashboard.tsx"),
+    read("app/api/photos/route.ts"),
+  ]);
   assert.match(dashboard, /await fetch\("\/api\/photos"/);
   assert.match(dashboard, /response\.ok/);
+  assert.match(dashboard, /PHOTO_TARGET_BYTES = 1\.8 \* 1024 \* 1024/);
+  assert.match(dashboard, /PHOTO_MAX_COMPRESSION_ATTEMPTS = 4/);
+  assert.match(dashboard, /await compressPhoto\(file\)/);
+  assert.match(dashboard, /canvas\.toBlob/);
+  assert.match(dashboard, /imageOrientation: "from-image"/);
+  assert.match(route, /photo\.size > 4 \* 1024 \* 1024/);
+  assert.match(dashboard, /正在縮小照片…/);
   assert.match(dashboard, /上傳中…/);
   assert.match(dashboard, /已安全保存/);
   assert.match(dashboard, /上傳失敗/);

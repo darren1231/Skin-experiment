@@ -13,7 +13,7 @@ export async function POST(request: Request) {
   if (!(photo instanceof File) || !["front", "left", "right"].includes(angle) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return Response.json({ error: "照片資料不正確" }, { status: 400 });
   }
-  if (photo.size > 10 * 1024 * 1024 || !photo.type.startsWith("image/")) return Response.json({ error: "照片需為 10MB 以下的圖片" }, { status: 400 });
+  if (photo.size > 4 * 1024 * 1024 || !photo.type.startsWith("image/")) return Response.json({ error: "照片需為 4MB 以下的圖片" }, { status: 400 });
   const key = `${user.id}/${date}/${angle}-${crypto.randomUUID()}`;
   try {
     await env.FACE_PHOTOS.put(key, photo.stream(), { httpMetadata: { contentType: photo.type } });
