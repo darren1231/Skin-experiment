@@ -2,6 +2,7 @@
 /* eslint-disable @next/next/no-img-element -- authenticated photos and camera previews use dynamic URLs */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import FaceAngleCamera from "./face-angle-camera";
 
 type Metric = { key: string; label: string; value: number; color: string };
 type MetricValues = Record<string, number>;
@@ -21,6 +22,10 @@ type RecordRow = {
 type PhotoRow = { id: number; entryDate: string; angle: "front" | "left" | "right"; createdAt?: string };
 type UploadStatus = { state: "idle" | "uploading" | "saved" | "error"; message?: string };
 
+const PHOTO_TARGET_BYTES = 1.8 * 1024 * 1024;
+const PHOTO_MAX_COMPRESSION_ATTEMPTS = 4;
+const PHOTO_MAX_DIMENSION = 2048;
+const PHOTO_UPLOAD_ATTEMPTS = 3;
 const angles = [["front", "正面"], ["left", "左側 45°"], ["right", "右側 45°"]] as const;
 const metricNames: Record<string, string> = { acne: "痘痘", redness: "泛紅", dryness: "乾燥", oil: "出油", sensitivity: "敏感" };
 const initialMetrics: Metric[] = [
@@ -48,6 +53,7 @@ export default function Dashboard({ userName, userEmail }: { userName: string; u
   const [photoRows, setPhotoRows] = useState<PhotoRow[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const [photoAngle, setPhotoAngle] = useState<PhotoRow["angle"]>("front");
+  const [cameraOpen, setCameraOpen] = useState(false);
   const todayKey = getTaipeiDateKey();
 
   useEffect(() => {
@@ -62,25 +68,32 @@ export default function Dashboard({ userName, userEmail }: { userName: string; u
 
   function choosePhoto(angle: PhotoRow["angle"]) {
     setPhotoAngle(angle);
-    inputRef.current?.click();
+    setCameraOpen(true);
   }
 
   async function onPhoto(file?: File) {
     if (!file) return;
     const angle = photoAngle;
-    const previewUrl = URL.createObjectURL(file);
-    setPreviews((current) => {
-      if (current[angle]) URL.revokeObjectURL(current[angle]);
-      return { ...current, [angle]: previewUrl };
-    });
-    setUploadStatus((current) => ({ ...current, [angle]: { state: "uploading" } }));
-
-    const body = new FormData();
-    body.append("photo", file);
-    body.append("angle", angle);
-    body.append("entryDate", todayKey);
+    setUploadStatus((current) => ({ ...current, [angle]: { state: "uploading", message: file.size > PHOTO_TARGET_BYTES ? "正在縮小照片…" : "上傳中…" } }));
     try {
-      const response = await fetch("/api/photos", { method: "POST", body });
+      const uploadFile = await compressPhoto(file);
+      const previewUrl = URL.createObjectURL(uploadFile);
+      setPreviews((current) => {
+        if (current[angle]) URL.revokeObjectURL(current[angle]);
+        return { ...current, [angle]: previewUrl };
+      });
+      setUploadStatus((current) => ({ ...current, [angle]: { state: "uploading", message: "上傳中…" } }));
+
+      const body = new FormData();
+      body.append("photo", uploadFile);
+      body.append("angle", angle);
+      body.append("entryDate", todayKey);
+      const response = await uploadPhotoWithRetry(body, (attempt) => {
+        setUploadStatus((current) => ({
+          ...current,
+          [angle]: { state: "uploading", message: `上傳不穩定，正在重試 ${attempt}/${PHOTO_UPLOAD_ATTEMPTS}…` },
+        }));
+      });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.photo) throw new Error(data.error || "上傳失敗");
       const stored: PhotoRow = data.photo;
@@ -118,6 +131,18 @@ export default function Dashboard({ userName, userEmail }: { userName: string; u
   }
 
   return <main className="app-shell">
+    {cameraOpen && <FaceAngleCamera
+      angle={photoAngle}
+      onClose={() => setCameraOpen(false)}
+      onFallback={() => {
+        setCameraOpen(false);
+        window.setTimeout(() => inputRef.current?.click(), 0);
+      }}
+      onCapture={(file) => {
+        setCameraOpen(false);
+        void onPhoto(file);
+      }}
+    />}
     <aside className="sidebar">
       <div className="brand"><span className="brand-mark">膚</span><div><b>每日肌膚</b><small>SKIN NOTES</small></div></div>
       <nav aria-label="主要功能">
@@ -141,9 +166,9 @@ export default function Dashboard({ userName, userEmail }: { userName: string; u
             const status = uploadStatus[id];
             return <button key={id} onClick={() => choosePhoto(id)} className={previews[id] ? "has-photo" : ""}>
               {previews[id] ? <img src={previews[id]} alt={`${label}拍攝預覽`} /> : <><span className="camera">◎</span><b>{label}</b><small>對齊輪廓拍攝</small></>}
-              {status?.state === "uploading" && <span className="upload-status uploading">上傳中…</span>}
+              {status?.state === "uploading" && <span className="upload-status uploading">{status.message ?? "上傳中…"}</span>}
               {status?.state === "saved" && <span className="upload-status saved">✓ 已安全保存</span>}
-              {status?.state === "error" && <span className="upload-status error" title={status.message}>上傳失敗・請重拍</span>}
+              {status?.state === "error" && <span className="upload-status error" title={status.message}>上傳失敗：{status.message ?? "請重新拍攝"}</span>}
             </button>;
           })}</div>
           <div className="form-grid"><div className="metric-card"><h3>今天的肌膚狀況</h3><p>0 代表沒有，5 代表最明顯</p>{metrics.map((metric) => <label className="metric-row" key={metric.key}><span><i style={{ background: metric.color }} />{metric.label}</span><output>{metric.value}</output><input aria-label={metric.label} type="range" min="0" max="5" value={metric.value} onChange={(event) => setMetrics((all) => all.map((item) => item.key === metric.key ? { ...item, value: Number(event.target.value) } : item))} /></label>)}</div>
@@ -170,6 +195,7 @@ function CompareView({ records, photos }: { records: RecordRow[]; photos: PhotoR
   const dates = useMemo(() => [...new Set(records.map((record) => record.entryDate))].sort(), [records]);
   const [fromChoice, setFromChoice] = useState("");
   const [toChoice, setToChoice] = useState("");
+  const [compareAngle, setCompareAngle] = useState<PhotoRow["angle"]>("front");
   const fromDate = fromChoice && dates.includes(fromChoice) ? fromChoice : dates.at(-2) ?? dates[0] ?? "";
   const toDate = toChoice && dates.includes(toChoice) ? toChoice : dates.at(-1) ?? "";
   const from = records.find((record) => record.entryDate === fromDate);
@@ -180,8 +206,45 @@ function CompareView({ records, photos }: { records: RecordRow[]; photos: PhotoR
     <div className="card-title"><div><span className="eyebrow">任意日期比較</span><h2>看看兩天之間改變了什麼</h2></div><span className="private-label">僅你可見</span></div>
     <div className="compare-controls"><label>較早／基準日期<select aria-label="基準日期" value={fromDate} onChange={(event) => setFromChoice(event.target.value)}>{dates.map((date) => <option key={date} value={date}>{formatDate(date)}</option>)}</select></label><span>比較</span><label>較晚／對照日期<select aria-label="對照日期" value={toDate} onChange={(event) => setToChoice(event.target.value)}>{dates.map((date) => <option key={date} value={date}>{formatDate(date)}</option>)}</select></label></div>
     {fromDate === toDate && <p className="compare-warning">目前選到同一天，請選擇兩個不同日期查看變化。</p>}
-    {from && to && <><div className="compare-grid"><DaySnapshot title="基準" record={from} photos={photos} /><DaySnapshot title="對照" record={to} photos={photos} /></div><MetricComparison from={from} to={to} /></>}
+    {from && to && <>
+      <div className="angle-switch" role="group" aria-label="選擇比較角度">{angles.map(([angle, label]) =>
+        <button key={angle} type="button" className={compareAngle === angle ? "active" : ""} aria-pressed={compareAngle === angle} onClick={() => setCompareAngle(angle)}>{label}</button>)}
+      </div>
+      <div className="photo-compare-board">
+        <ComparePhoto record={from} photos={photos} angle={compareAngle} label="基準" />
+        <ComparePhoto record={to} photos={photos} angle={compareAngle} label="對照" />
+      </div>
+      <p className="compare-hint">兩張照片保持同一角度並排顯示，方便直接觀察痘痘、泛紅與膚色變化。</p>
+      <details className="compare-details">
+        <summary><span>查看分數與生活保養細節</span><small>睡眠、壓力、保養與備註</small></summary>
+        <MetricComparison from={from} to={to} />
+        <div className="compare-facts"><RecordDetails title="基準日" record={from} /><RecordDetails title="對照日" record={to} /></div>
+      </details>
+    </>}
   </section>;
+}
+
+function ComparePhoto({ record, photos, angle, label }: { record: RecordRow; photos: PhotoRow[]; angle: PhotoRow["angle"]; label: string }) {
+  const photo = latestPhoto(photos, record.entryDate, angle);
+  const angleLabel = angles.find(([value]) => value === angle)?.[1] ?? angle;
+  return <article className="compare-photo-card">
+    <header><span>{label}</span><b>{formatShortDate(record.entryDate)}</b></header>
+    <div className="compare-photo-frame">{photo
+      ? <img src={`/api/photos/${photo.id}`} alt={`${record.entryDate} ${angleLabel}`} />
+      : <div><b>沒有照片</b><small>{angleLabel}</small></div>}
+    </div>
+  </article>;
+}
+
+function RecordDetails({ title, record }: { title: string; record: RecordRow }) {
+  return <section><h3>{title}・{formatShortDate(record.entryDate)}</h3><dl className="record-facts">
+    <div><dt>睡眠</dt><dd>{record.sleep ?? 0} 小時</dd></div>
+    <div><dt>壓力</dt><dd>{record.stress ?? 0} / 5</dd></div>
+    <div><dt>全臉保養</dt><dd>{record.wholeRoutine || "未記錄"}</dd></div>
+    <div><dt>左臉</dt><dd>{record.leftRoutine || "未記錄"}</dd></div>
+    <div><dt>右臉</dt><dd>{record.rightRoutine || "未記錄"}</dd></div>
+    <div className="full"><dt>當天改變／備註</dt><dd>{record.note || "沒有備註"}</dd></div>
+  </dl></section>;
 }
 
 function HistoryView({ records, photos }: { records: RecordRow[]; photos: PhotoRow[] }) {
@@ -235,10 +298,92 @@ function latestPhoto(photos: PhotoRow[], date: string, angle: PhotoRow["angle"])
   return photos.find((photo) => photo.entryDate === date && photo.angle === angle);
 }
 
+async function compressPhoto(file: File) {
+  if (!file.type.startsWith("image/")) throw new Error("請選擇照片檔案");
+  if (file.size <= PHOTO_TARGET_BYTES) return file;
+
+  const image = await loadPhotoImage(file);
+  try {
+    let width = image.naturalWidth;
+    let height = image.naturalHeight;
+    const longestSide = Math.max(width, height);
+    if (longestSide > PHOTO_MAX_DIMENSION) {
+      const ratio = PHOTO_MAX_DIMENSION / longestSide;
+      width = Math.round(width * ratio);
+      height = Math.round(height * ratio);
+    }
+
+    let compressed: Blob | null = null;
+    for (let attempt = 0; attempt < PHOTO_MAX_COMPRESSION_ATTEMPTS; attempt += 1) {
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, width);
+      canvas.height = Math.max(1, height);
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("瀏覽器無法處理這張照片");
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const quality = Math.max(0.58, 0.86 - attempt * 0.09);
+      compressed = await canvasToBlob(canvas, quality);
+      if (compressed.size <= PHOTO_TARGET_BYTES) break;
+      width = Math.round(width * 0.82);
+      height = Math.round(height * 0.82);
+    }
+
+    if (!compressed || compressed.size > PHOTO_TARGET_BYTES) {
+      throw new Error("照片縮小後仍然太大，請改用較低解析度重新拍攝");
+    }
+    return new File([compressed], `${file.name.replace(/\.[^.]+$/, "") || "skin-photo"}.jpg`, {
+      type: "image/jpeg",
+      lastModified: Date.now(),
+    });
+  } finally {
+    URL.revokeObjectURL(image.src);
+  }
+}
+
+function loadPhotoImage(file: File) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => {
+      URL.revokeObjectURL(image.src);
+      reject(new Error("手機無法讀取這種照片格式，請將相機格式改為「最相容」後重拍"));
+    };
+    image.src = URL.createObjectURL(file);
+  });
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, quality: number) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("照片壓縮失敗，請重新拍攝")), "image/jpeg", quality);
+  });
+}
+
+async function uploadPhotoWithRetry(body: FormData, onRetry: (attempt: number) => void) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= PHOTO_UPLOAD_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch("/api/photos", { method: "POST", body });
+      if (response.status < 500 || attempt === PHOTO_UPLOAD_ATTEMPTS) return response;
+      lastError = new Error(`伺服器暫時無法上傳（${response.status}）`);
+    } catch (error) {
+      lastError = error;
+      if (attempt === PHOTO_UPLOAD_ATTEMPTS) break;
+    }
+    onRetry(attempt + 1);
+    await new Promise((resolve) => window.setTimeout(resolve, attempt * 700));
+  }
+  throw new Error(lastError instanceof Error ? lastError.message : "網路連線中斷，請稍後再試");
+}
+
 function formatDate(date: string) {
   const [year, month, day] = date.split("-").map(Number);
   if (!year || !month || !day) return date;
   return new Intl.DateTimeFormat("zh-TW", { year: "numeric", month: "long", day: "numeric" }).format(new Date(year, month - 1, day));
+}
+
+function formatShortDate(date: string) {
+  const [, month, day] = date.split("-").map(Number);
+  return month && day ? `${month}/${day}` : date;
 }
 
 function getTaipeiDateKey() {
