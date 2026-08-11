@@ -1,7 +1,4 @@
-import { env } from "cloudflare:workers";
 import { requireLocalUser } from "../../../lib/auth-user";
-import { getDb } from "../../../db";
-import { facePhotos } from "../../../db/schema";
 
 export async function POST(request: Request) {
   const user = await requireLocalUser();
@@ -13,12 +10,27 @@ export async function POST(request: Request) {
   if (!(photo instanceof File) || !["front", "left", "right"].includes(angle) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return Response.json({ error: "照片資料不正確" }, { status: 400 });
   }
-  if (photo.size > 4 * 1024 * 1024 || !photo.type.startsWith("image/")) return Response.json({ error: "照片需為 4MB 以下的圖片" }, { status: 400 });
+  if (photo.size > 4 * 1024 * 1024 || !photo.type.startsWith("image/")) {
+    return Response.json({ error: "照片需為 4MB 以下的圖片" }, { status: 400 });
+  }
   const key = `${user.id}/${date}/${angle}-${crypto.randomUUID()}`;
+  const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "face-photos";
   try {
-    await env.FACE_PHOTOS.put(key, photo.stream(), { httpMetadata: { contentType: photo.type } });
-    const [stored] = await getDb().insert(facePhotos).values({ userId: user.id, ownerEmail: user.email, entryDate: date, angle, objectKey: key, contentType: photo.type }).returning({ id: facePhotos.id });
-    return Response.json({ photo: { id: stored.id, entryDate: date, angle, url: `/api/photos/${stored.id}` } }, { status: 201 });
+    const { error: uploadError } = await user.supabase.storage.from(bucket).upload(key, photo, { contentType: photo.type });
+    if (uploadError) throw uploadError;
+    const { data, error: insertError } = await user.supabase.from("face_photos").insert({
+      user_id: user.id,
+      owner_email: user.email,
+      entry_date: date,
+      angle,
+      object_key: key,
+      content_type: photo.type,
+    }).select("id").single();
+    if (insertError) {
+      await user.supabase.storage.from(bucket).remove([key]);
+      throw insertError;
+    }
+    return Response.json({ photo: { id: data.id, entryDate: date, angle, url: `/api/photos/${data.id}` } }, { status: 201 });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "無法上傳照片" }, { status: 500 });
   }
