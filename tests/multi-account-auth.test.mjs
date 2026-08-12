@@ -32,13 +32,13 @@ test("signed-in account identity stays visible on mobile", async () => {
 
 test("all skin records are isolated by verified user id", async () => {
   const [schema, checkins, photos] = await Promise.all([
-    read("db/schema.ts"),
+    read("supabase/schema.sql"),
     read("app/api/checkins/route.ts"),
     read("app/api/photos/[id]/route.ts"),
   ]);
-  assert.match(schema, /checkins_user_date_idx/);
-  assert.match(checkins, /eq\(checkins\.userId, user\.id\)/);
-  assert.match(photos, /eq\(facePhotos\.userId, user\.id\)/);
+  assert.match(schema, /auth\.uid\(\)::text = user_id/);
+  assert.match(checkins, /\.eq\("user_id", user\.id\)/);
+  assert.match(photos, /\.eq\("user_id", user\.id\)/);
   assert.doesNotMatch(checkins, /local-preview@/);
 });
 

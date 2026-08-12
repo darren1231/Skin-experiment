@@ -1,16 +1,15 @@
 import { createServerClient } from "@supabase/ssr";
-import { env } from "cloudflare:workers";
 import { cookies } from "next/headers";
 
 type AuthEnv = { SUPABASE_URL?: string; SUPABASE_PUBLISHABLE_KEY?: string };
 
 export function isGoogleAuthConfigured() {
-  const authEnv = env as unknown as AuthEnv;
+  const authEnv = process.env as AuthEnv;
   return Boolean(authEnv.SUPABASE_URL && authEnv.SUPABASE_PUBLISHABLE_KEY);
 }
 
 export async function createSupabaseServerClient() {
-  const authEnv = env as unknown as AuthEnv;
+  const authEnv = process.env as AuthEnv;
   if (!authEnv.SUPABASE_URL || !authEnv.SUPABASE_PUBLISHABLE_KEY) return null;
   const cookieStore = await cookies();
 

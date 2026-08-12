@@ -8,6 +8,6 @@ export async function GET(request: Request) {
   if (!client || !code) return Response.redirect(new URL("/?auth_error=callback", request.url));
   const { data, error } = await client.auth.exchangeCodeForSession(code);
   if (error || !data.user) return Response.redirect(new URL("/?auth_error=callback", request.url));
-  await syncLocalUser(data.user);
+  await syncLocalUser(data.user, client);
   return Response.redirect(new URL("/", request.url));
 }

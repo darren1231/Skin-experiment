@@ -1,98 +1,40 @@
-# vinext-starter
+# Skin Notes
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+使用 Next.js App Router 建置並部署至 Vercel。Google 登入、Postgres 資料庫與私人照片儲存皆沿用同一個 Supabase project。
 
-## Prerequisites
+## 本機開發
 
-- Node.js `>=22.13.0`
-
-## Quick Start
+需要 Node.js 22.13 或更新版本。
 
 ```bash
 npm install
+copy .env.example .env.local
 npm run dev
-npm run build
 ```
 
-This starter does not use `wrangler.jsonc`.
+環境變數：
 
-## Included Shape
+- `SUPABASE_URL`：既有 Supabase project URL
+- `SUPABASE_PUBLISHABLE_KEY`：Supabase publishable key
+- `SUPABASE_STORAGE_BUCKET`：可省略，預設為 `face-photos`
 
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
+## Supabase 初始化
 
-## Workspace Auth Headers
+在 Supabase SQL Editor 執行 [`supabase/schema.sql`](supabase/schema.sql)。它會建立：
 
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
+- `users`、`checkins`、`face_photos` 資料表
+- 每位登入者只能存取自己資料的 RLS policies
+- 私有 `face-photos` Storage bucket 及使用者目錄 policies
 
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
+Supabase Authentication 需啟用 Google provider，並將正式網址的 `/auth/callback` 加到 Redirect URLs。
 
-Treat the full name as optional and fall back to email when it is absent:
+## Vercel 部署
 
-```tsx
-import { headers } from "next/headers";
+Vercel 會自動辨識 Next.js，使用 `npm run build`。請在 Production、Preview 與 Development 環境設定上述三個環境變數。`SUPABASE_PUBLISHABLE_KEY` 可以安全地用於應用程式，但仍建議由 Vercel Environment Variables 管理而不是寫入 Git。
 
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
+## 指令
 
-  const displayName = fullName ?? email;
-  // ...
-}
-```
-
-## Optional Dispatch-Owned ChatGPT Sign-In
-
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
-
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
-
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
-
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
-
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
-
-## Useful Commands
-
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
-
-## Learn More
-
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+- `npm run dev`：啟動本機開發伺服器
+- `npm run build`：執行 production build
+- `npm run lint`：執行 ESLint
+- `npm test`：執行 production build 與應用程式測試
