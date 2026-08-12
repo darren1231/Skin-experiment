@@ -8,17 +8,16 @@ export async function syncLocalUser(user: User, existingClient?: SupabaseClient)
   const avatarUrl = typeof user.user_metadata?.avatar_url === "string" ? user.user_metadata.avatar_url : null;
   const client = existingClient ?? await createSupabaseServerClient();
   if (!client) throw new Error("Supabase 尚未設定");
-
+  const now = new Date().toISOString();
   const { error } = await client.from("users").upsert({
     id: user.id,
     email,
     display_name: displayName,
     avatar_url: avatarUrl,
-    last_login_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    last_login_at: now,
+    updated_at: now,
   }, { onConflict: "id" });
   if (error) throw error;
-
   return { id: user.id, email, displayName, avatarUrl, supabase: client };
 }
 

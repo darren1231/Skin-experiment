@@ -30,5 +30,5 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "build", "worker", "examples", "db", "drizzle.config.ts", "vite.config.ts"]
+  "exclude": ["node_modules", "build", "db", "drizzle", "examples", "worker", "vite.config.ts", "cloudflare-env.d.ts", "drizzle.config.ts"]
 }
