@@ -117,6 +117,16 @@ test("calendar shows every same-day photo ordered by actual time", async () => {
   assert.match(dashboard, /<PhotoGrid photos=\{dayPhotos\}/);
   assert.match(dashboard, /function JournalManager/);
   assert.match(dashboard, /fetch\("\/api\/checkins"/);
+  assert.match(dashboard, /const hasJournal = journals\.some\(\(item\) => item\.entryDate === key\)/);
+  assert.match(dashboard, /hasJournal \? <b className="journal-marker">有日誌<\/b>/);
+});
+
+test("journal number fields can be cleared before entering a replacement value", async () => {
+  const dashboard = await read("app/dashboard.tsx");
+  assert.match(dashboard, /const \[sleep, setSleep\] = useState\(String\(/);
+  assert.match(dashboard, /onChange=\{\(event\) => setSleep\(event\.target\.value\)\}/);
+  assert.doesNotMatch(dashboard, /setSleep\(Number\(event\.target\.value\)\)/);
+  assert.match(dashboard, /sleep\.trim\(\) === ""/);
 });
 
 test("migration is additive and maps legacy photos without guessing capture time", async () => {

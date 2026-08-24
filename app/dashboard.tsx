@@ -389,7 +389,8 @@ function CalendarView({ photos, journals }: { photos: Photo[]; journals: Journal
   return <section className="paper-card history-page"><div className="card-title calendar-toolbar"><div><span className="eyebrow">同一天可有任意張照片</span><h2>{year} 年 {month + 1} 月</h2></div><div className="month-actions"><button onClick={() => setCursor(new Date(year, month - 1, 1))}>← 上月</button><button onClick={() => setCursor(new Date(year, month + 1, 1))}>下月 →</button></div></div><div className="calendar-head">{["日", "一", "二", "三", "四", "五", "六"].map((day) => <span key={day}>{day}</span>)}</div><div className="calendar-grid">{Array.from({ length: first }).map((_, index) => <i key={index} />)}{Array.from({ length: days }).map((_, index) => {
     const day = index + 1, key = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
     const count = photos.filter((photo) => photo.capturedDate === key).length;
-    return <button key={key} className={`${count ? "recorded" : ""} ${selectedDate === key ? "selected" : ""}`} onClick={() => setSelectedDate(key)}><span>{day}</span>{count ? <b>{count} 張照片</b> : <small>尚無照片</small>}</button>;
+    const hasJournal = journals.some((item) => item.entryDate === key);
+    return <button key={key} className={`${count || hasJournal ? "recorded" : ""} ${selectedDate === key ? "selected" : ""}`} onClick={() => setSelectedDate(key)}><span>{day}</span>{count ? <b>{count} 張照片</b> : null}{hasJournal ? <b className="journal-marker">有日誌</b> : null}{!count && !hasJournal ? <small>尚無紀錄</small> : null}</button>;
   })}</div><div className="day-detail"><div className="section-title"><div><span className="eyebrow">當日照片</span><h2>{selectedDate}</h2></div>{journal && <span className="private-label">含舊日誌資料</span>}</div>{journal && <div className="legacy-journal"><b>當日日誌</b><span>睡眠 {journal.sleep} 小時・壓力 {journal.stress}/5</span><p>{journal.note || "沒有備註"}</p></div>}<PhotoGrid photos={dayPhotos} /></div></section>;
 }
 
@@ -404,19 +405,22 @@ function JournalManager({ journals, refresh }: { journals: Journal[]; refresh: (
 }
 
 function JournalForm({ entryDate, existing, refresh }: { entryDate: string; existing?: Journal; refresh: () => Promise<void> }) {
-  const [sleep, setSleep] = useState(existing?.sleep ?? 7);
-  const [stress, setStress] = useState(existing?.stress ?? 2);
+  const [sleep, setSleep] = useState(String(existing?.sleep ?? 7));
+  const [stress, setStress] = useState(String(existing?.stress ?? 2));
   const [note, setNote] = useState(existing?.note ?? "");
   const [status, setStatus] = useState("");
 
   async function save() {
+    const sleepValue = Number(sleep), stressValue = Number(stress);
+    if (sleep.trim() === "" || !Number.isFinite(sleepValue) || sleepValue < 0 || sleepValue > 24) return setStatus("睡眠時數請輸入 0 至 24");
+    if (stress.trim() === "" || !Number.isFinite(stressValue) || stressValue < 0 || stressValue > 5) return setStatus("壓力程度請輸入 0 至 5");
     setStatus("儲存中…");
     let metrics: Record<string, unknown> = {};
     try { metrics = existing?.metrics ? JSON.parse(existing.metrics) as Record<string, unknown> : {}; } catch { metrics = {}; }
     const response = await fetch("/api/checkins", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ entryDate, sleep, stress, note, metrics }),
+      body: JSON.stringify({ entryDate, sleep: sleepValue, stress: stressValue, note, metrics }),
     });
     const data = await response.json().catch(() => ({})) as { error?: string };
     if (!response.ok) return setStatus(data.error || "日誌儲存失敗");
@@ -426,8 +430,8 @@ function JournalForm({ entryDate, existing, refresh }: { entryDate: string; exis
 
   return <>
     <div className="date-time-row">
-      <label>睡眠時數<input type="number" min="0" max="24" step=".5" value={sleep} onChange={(event) => setSleep(Number(event.target.value))} /></label>
-      <label>壓力程度（0–5）<input type="number" min="0" max="5" value={stress} onChange={(event) => setStress(Number(event.target.value))} /></label>
+      <label>睡眠時數<input type="number" min="0" max="24" step=".5" value={sleep} onChange={(event) => setSleep(event.target.value)} /></label>
+      <label>壓力程度（0–5）<input type="number" min="0" max="5" value={stress} onChange={(event) => setStress(event.target.value)} /></label>
     </div>
     <label className="field">當日備註<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="保養、作息或皮膚狀況" /></label>
     <div className="save-bar"><span>{status || "相同日期會安全更新原紀錄"}</span><button className="primary" onClick={() => void save()}>儲存日誌</button></div>
